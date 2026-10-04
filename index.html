@@ -215,6 +215,8 @@ table.rt{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;f
 .tbl td.wrapc{white-space:normal;min-width:190px}
 .rt td.sm{font-size:11.5px;min-width:150px;white-space:normal;text-align:right}
 .rt td.tx{white-space:normal}
+.amt.rp{background:var(--green-soft);border-color:#B7DED3}
+.amt.rp label{color:#14594A}
 @media print{.supportbar{display:none!important}body{padding-bottom:0}}
 </style>
 </head>
@@ -329,10 +331,11 @@ const TYPES={
   annual:{l:'إجازة سنوية',u:'يوم',days:true,cls:'blue'},
   sick:{l:'إجازة مرضية',u:'يوم',days:true,cls:'gold'},
   unpaid:{l:'إجازة بدون راتب',u:'يوم',days:true,cls:'gold'},
-  deficit:{l:'عجز',u:'ر.س',days:false,cls:'red'}
+  deficit:{l:'عجز',u:'ر.س',days:false,cls:'red'},
+  repay:{l:'سداد من المديونية / أغراض',u:'ر.س',days:false,cls:'green'}
 };
-function sumText(t){const o=[];['absent','unpaid','annual','sick'].forEach(k=>{if(num(t[k]))o.push(`${fmt(t[k])} يوم ${TYPES[k].l}`)});if(num(t.deficit))o.push(`${fmt(t.deficit)} عجز`);return o.join(' + ')}
-const ORDER=['absent','unpaid','annual','sick','deficit'];
+function sumText(t){const o=[];['absent','unpaid','annual','sick'].forEach(k=>{if(num(t[k]))o.push(`${fmt(t[k])} يوم ${TYPES[k].l}`)});if(num(t.deficit))o.push(`${fmt(t.deficit)} عجز`);if(num(t.repay))o.push(`${fmt(t.repay)} سداد من المديونية`);return o.join(' + ')}
+const ORDER=['absent','unpaid','annual','sick','deficit','repay'];
 const typeTag=t=>`<span class="tag ${TYPES[t].cls}">${TYPES[t].l}</span>`;
 const qtyText=ev=>fmt(ev.qty)+' '+TYPES[ev.type].u;
 function baseOf(e){const b=S().base;return b==='basic'?num(e.basic):b==='total'?num(e.total):num(e.total)-num(e.ins)}
@@ -341,7 +344,7 @@ function rateFor(e,date){
   return {rate:baseOf(e)/div,div};
 }
 function evDed(e,ev){
-  const q=num(ev.qty);if(ev.type==='deficit')return r2(q);
+  const q=num(ev.qty);if(ev.type==='deficit')return r2(q);if(ev.type==='repay')return -r2(q);
   const pct={absent:100,unpaid:S().unpaidPct,annual:S().annualPct,sick:S().sickPct}[ev.type];
   return r2(q*rateFor(e,ev.date).rate*pct/100);
 }
@@ -352,14 +355,14 @@ function buildRows(from,to){
   const rows=[];
   for(const e of DB.employees){
     const list=by[e.id]||[];if(!e.active&&!list.length)continue;
-    const R={e,total:num(e.total)*mf,basic:num(e.basic)*mf,housing:num(e.housing)*mf,allow:num(e.allow)*mf,ins:num(e.ins)*mf,absent:0,annual:0,sick:0,unpaid:0,absVal:0,deficit:0,owed:0,dedSal:0,net:0,note:'',cnt:list.length};
+    const R={e,total:num(e.total)*mf,basic:num(e.basic)*mf,housing:num(e.housing)*mf,allow:num(e.allow)*mf,ins:num(e.ins)*mf,absent:0,annual:0,sick:0,unpaid:0,absVal:0,deficit:0,repay:0,owed:0,dedSal:0,net:0,note:'',cnt:list.length};
     const notes=[];
     list.forEach(v=>{
       const d=evDed(e,v);
-      if(v.type==='deficit')R.deficit+=d;else{R[v.type]+=num(v.qty);R.absVal+=d}
+      if(v.type==='deficit')R.deficit+=d;else if(v.type==='repay')R.repay+=-d;else{R[v.type]+=num(v.qty);R.absVal+=d}
       if(v.note)notes.push(fd(v.date)+': '+v.note);
     });
-    R.owed=R.absVal+R.deficit;R.dedSal=R.owed;R.net=Math.max(0,R.total-R.ins-R.owed);R.note=notes.join(' | ');
+    R.owed=R.absVal+R.deficit-R.repay;R.dedSal=Math.max(0,R.owed);R.net=Math.max(0,R.total-R.ins-R.dedSal);R.note=notes.join(' | ');
     for(const k of Object.keys(R))if(typeof R[k]==='number')R[k]=r2(R[k]);
     R.summary=sumText(R);
     rows.push(R);
@@ -420,6 +423,7 @@ function pageDash(){
   <div class="stat"><small>أيام الغياب</small><b>${fmt(tot('absent'))}</b></div>
   <div class="stat"><small>قيمة الغياب</small><b class="neg">${fmt(tot('absVal'))}</b></div>
   <div class="stat"><small>إجمالي العجز</small><b class="neg">${fmt(tot('deficit'))}</b></div>
+  <div class="stat"><small>سداد من المديونية / أغراض</small><b class="pos">${fmt(tot('repay'))}</b></div>
   <div class="stat hl"><small>إجمالي المستحق على الموظفين</small><b>${fmt(tot('owed'))}</b></div>
   <div class="stat"><small>أيام الإجازة السنوية</small><b>${fmt(tot('annual'))}</b></div>
   <div class="stat"><small>أيام الإجازة المرضية</small><b>${fmt(tot('sick'))}</b></div></div>`;
@@ -436,7 +440,7 @@ function pageDash(){
 function ensureLog(){if(!UI.log){const p=presets()[0];UI.log={from:p.from,to:p.to,branch:'',type:'',q:''}}return UI.log}
 function amtBox(k){
   const t=TYPES[k];
-  return `<div class="amt"><label>${t.l}${t.days?'':' (ر.س)'}</label><input class="inp" type="number" min="0" step="${t.days?'0.5':'any'}" data-t="${k}" inputmode="decimal" placeholder="0">${t.days?`<div class="qk">${[0.5,1,2,3].map(v=>`<button type="button" class="btn sm" data-qt="${k}" data-q="${v}">${v===0.5?'½':v}</button>`).join('')}</div>`:''}</div>`;
+  return `<div class="amt ${k==='repay'?'rp':''}"><label>${t.l}${t.days?'':' (ر.س)'}</label><input class="inp" type="number" min="0" step="${t.days?'0.5':'any'}" data-t="${k}" inputmode="decimal" placeholder="0">${t.days?`<div class="qk">${[0.5,1,2,3].map(v=>`<button type="button" class="btn sm" data-qt="${k}" data-q="${v}">${v===0.5?'½':v}</button>`).join('')}</div>`:''}</div>`;
 }
 function pageEntry(){
   if(!DB.employees.length){main.innerHTML=`<div class="card empty"><h2>لا يوجد موظفون</h2><p>أضف الموظفين أولًا من صفحة «الموظفون».</p><div class="row"><button class="btn primary" id="ge">الذهاب إلى الموظفين</button></div></div>`;$('#ge').onclick=()=>go('emps');return}
@@ -470,7 +474,7 @@ function renderPrev(){
   const el=$('#prev');if(!el)return;const e=emp(UI.sel),a=readAmts(),s=sumText(a);
   if(!e){el.innerHTML='<span class="muted">اختر موظفًا، ثم اكتب ما عليه.</span>';return}
   const rt=rateFor(e,UI.eDate);let d=0;ORDER.forEach(k=>{if(a[k])d+=evDed(e,{type:k,qty:a[k],date:UI.eDate})});
-  el.innerHTML=`قيمة اليوم <b>${fmt(r2(rt.rate))}</b> ر.س (الراتب المعتمد ÷ ${rt.div}) — ${s?`سيُسجَّل: <b>${s}</b> ← الخصم المتوقع <b class="neg">${fmt(r2(d))}</b>`:'<span class="muted">لم تكتب أي حركة بعد</span>'}`;
+  el.innerHTML=`قيمة اليوم <b>${fmt(r2(rt.rate))}</b> ر.س (الراتب المعتمد ÷ ${rt.div}) — ${s?`سيُسجَّل: <b>${s}</b> ← الأثر المالي <b class="${d>0?'neg':'pos'}">${d>0?'عليه ':'له '}${fmt(Math.abs(r2(d)))}</b>`:'<span class="muted">لم تكتب أي حركة بعد</span>'}`;
 }
 function selectEmp(id,quiet){
   UI.sel=id;const e=emp(id);
@@ -502,7 +506,7 @@ function renderDraft(){
   const sum=r2(d.reduce((a,v)=>{const e=emp(v.eid);return a+(e?evDed(e,v):0)},0));
   box.innerHTML=`<div class="row" style="margin-bottom:10px"><h2 style="margin:0;flex:1">قائمة الإدخال <span class="tag gold">${d.length} حركة لم تُحفظ بعد</span></h2>
   <button class="btn" data-a="clr">تفريغ القائمة</button><button class="btn gold" data-a="save" style="height:40px;padding:0 24px">💾 حفظ الكل في السجل</button></div>
-  <div class="tbl-wrap" style="max-height:320px"><table class="tbl"><thead><tr><th>الموظف</th><th>الفرع</th><th>التاريخ</th><th>ما عليه</th><th class="n">الخصم المتوقع</th><th>ملاحظة</th><th></th></tr></thead><tbody>${groups.map(g=>{const e=emp(g[0].eid);const t={};g.forEach(v=>t[v.type]=(t[v.type]||0)+num(v.qty));const ded=r2(g.reduce((a,v)=>a+(e?evDed(e,v):0),0));return `<tr><td><b>${e?esc(e.name):'—'}</b></td><td>${e?esc(e.branch):''}</td><td>${fd(g[0].date)} <small>${dayName(g[0].date)}</small></td><td class="wrapc"><b>${sumText(t)}</b></td><td class="n neg">${ded?fmt(ded):'—'}</td><td>${esc(g.map(v=>v.note).filter(Boolean).join('، '))}</td><td><button class="btn sm danger" data-delg="${g.map(v=>v.id).join(',')}">حذف</button></td></tr>`}).join('')}</tbody><tfoot><tr><td colspan="4">إجمالي الخصم المتوقع</td><td class="n">${fmt(sum)}</td><td colspan="2"></td></tr></tfoot></table></div>`;
+  <div class="tbl-wrap" style="max-height:320px"><table class="tbl"><thead><tr><th>الموظف</th><th>الفرع</th><th>التاريخ</th><th>ما عليه</th><th class="n">الأثر المالي</th><th>ملاحظة</th><th></th></tr></thead><tbody>${groups.map(g=>{const e=emp(g[0].eid);const t={};g.forEach(v=>t[v.type]=(t[v.type]||0)+num(v.qty));const ded=r2(g.reduce((a,v)=>a+(e?evDed(e,v):0),0));return `<tr><td><b>${e?esc(e.name):'—'}</b></td><td>${e?esc(e.branch):''}</td><td>${fd(g[0].date)} <small>${dayName(g[0].date)}</small></td><td class="wrapc"><b>${sumText(t)}</b></td><td class="n neg">${ded?fmt(ded):'—'}</td><td>${esc(g.map(v=>v.note).filter(Boolean).join('، '))}</td><td><button class="btn sm danger" data-delg="${g.map(v=>v.id).join(',')}">حذف</button></td></tr>`}).join('')}</tbody><tfoot><tr><td colspan="4">صافي الأثر المالي</td><td class="n">${fmt(sum)}</td><td colspan="2"></td></tr></tfoot></table></div>`;
 }
 function logRows(){
   const L=UI.log,q=L.q.trim().toLowerCase();
@@ -525,8 +529,8 @@ function renderLogCard(){
 }
 function renderLogTable(){
   const rows=logRows(),box=$('#logTbl');if(!box)return;
-  let dd=0,df=0;rows.forEach(v=>{const e=emp(v.eid);if(!e)return;const d=evDed(e,v);if(v.type==='deficit')df+=d;else dd+=d});
-  box.innerHTML=rows.length?`<div class="tbl-wrap" style="max-height:480px"><table class="tbl"><thead><tr><th>التاريخ</th><th>الموظف</th><th>الفرع</th><th>النوع</th><th class="n">المقدار</th><th class="n">الخصم</th><th>ملاحظة</th><th></th></tr></thead><tbody>${rows.slice(0,400).map(v=>{const e=emp(v.eid);const d=e?evDed(e,v):0;return `<tr><td>${fd(v.date)} <small>${dayName(v.date)}</small></td><td><b>${e?esc(e.name):'(موظف محذوف)'}</b></td><td>${e?esc(e.branch):''}</td><td>${typeTag(v.type)}</td><td class="n">${qtyText(v)}</td><td class="n ${d?'neg':''}">${d?fmt(d):'—'}</td><td>${esc(v.note||'')}</td><td><button class="btn sm" data-edit="${v.id}">تعديل</button> <button class="btn sm danger" data-rm="${v.id}">حذف</button></td></tr>`}).join('')}</tbody></table></div><p class="muted" style="margin:8px 0 0;font-size:13px">${rows.length} حركة — خصم الغياب والإجازات: <b>${fmt(r2(dd))}</b> — العجز: <b>${fmt(r2(df))}</b>${rows.length>400?' (يعرض أول 400 حركة)':''}</p>`:`<div class="empty" style="padding:26px"><p style="margin:0">لا توجد حركات مطابقة في هذه الفترة.</p></div>`;
+  let dd=0,df=0,rp=0;rows.forEach(v=>{const e=emp(v.eid);if(!e)return;const d=evDed(e,v);if(v.type==='deficit')df+=d;else if(v.type==='repay')rp+=-d;else dd+=d});
+  box.innerHTML=rows.length?`<div class="tbl-wrap" style="max-height:480px"><table class="tbl"><thead><tr><th>التاريخ</th><th>الموظف</th><th>الفرع</th><th>النوع</th><th class="n">المقدار</th><th class="n">الأثر المالي</th><th>ملاحظة</th><th></th></tr></thead><tbody>${rows.slice(0,400).map(v=>{const e=emp(v.eid);const d=e?evDed(e,v):0;return `<tr><td>${fd(v.date)} <small>${dayName(v.date)}</small></td><td><b>${e?esc(e.name):'(موظف محذوف)'}</b></td><td>${e?esc(e.branch):''}</td><td>${typeTag(v.type)}</td><td class="n">${qtyText(v)}</td><td class="n ${d>0?'neg':d<0?'pos':''}">${d?fmt(d):'—'}</td><td>${esc(v.note||'')}</td><td><button class="btn sm" data-edit="${v.id}">تعديل</button> <button class="btn sm danger" data-rm="${v.id}">حذف</button></td></tr>`}).join('')}</tbody></table></div><p class="muted" style="margin:8px 0 0;font-size:13px">${rows.length} حركة — خصم الغياب والإجازات: <b>${fmt(r2(dd))}</b> — العجز: <b>${fmt(r2(df))}</b> — السداد: <b>${fmt(r2(rp))}</b>${rows.length>400?' (يعرض أول 400 حركة)':''}</p>`:`<div class="empty" style="padding:26px"><p style="margin:0">لا توجد حركات مطابقة في هذه الفترة.</p></div>`;
 }
 function searchEmps(q){
   q=q.trim().toLowerCase();if(!q)return [];
@@ -654,10 +658,10 @@ function empMoves(id){
   const e=emp(id);if(!e)return;
   const list=DB.events.filter(v=>v.eid===id).sort((a,b)=>b.date.localeCompare(a.date));
   const tot={};list.forEach(v=>{tot[v.type]=(tot[v.type]||0)+num(v.qty)});
-  const owed=r2(list.reduce((a,v)=>a+(['absent','unpaid','annual','sick','deficit'].includes(v.type)?evDed(e,v):0),0));
+  const owed=r2(list.reduce((a,v)=>a+evDed(e,v),0));
   modal(`حركات ${esc(e.name)}`,`<p class="muted" style="margin:0 0 10px">${esc(e.branch)} · ${esc(e.nat)}</p>
   <div class="mini" style="margin-bottom:12px">${Object.entries(TYPES).map(([k,t])=>`<div><small>${t.l}</small><b>${tot[k]?fmt(tot[k])+' '+t.u:'—'}</b></div>`).join('')}</div>
-  ${list.length?`<div class="tbl-wrap" style="max-height:380px"><table class="tbl"><thead><tr><th>التاريخ</th><th>النوع</th><th class="n">المقدار</th><th class="n">الخصم</th><th>ملاحظة</th></tr></thead><tbody>${list.map(v=>{const d=evDed(e,v);return `<tr><td>${fd(v.date)}</td><td>${typeTag(v.type)}</td><td class="n">${qtyText(v)}</td><td class="n ${d?'neg':''}">${d?fmt(d):'—'}</td><td>${esc(v.note||'')}</td></tr>`}).join('')}</tbody></table></div><p style="margin:10px 0 0">إجمالي الخصم على الموظف في كل الفترات: <b class="neg">${fmt(owed)}</b> ر.س</p>`:'<p class="muted">لا توجد حركات مسجلة لهذا الموظف.</p>'}`,`<button class="btn primary" data-close>إغلاق</button>`,true);
+  ${list.length?`<div class="tbl-wrap" style="max-height:380px"><table class="tbl"><thead><tr><th>التاريخ</th><th>النوع</th><th class="n">المقدار</th><th class="n">الأثر المالي</th><th>ملاحظة</th></tr></thead><tbody>${list.map(v=>{const d=evDed(e,v);return `<tr><td>${fd(v.date)}</td><td>${typeTag(v.type)}</td><td class="n">${qtyText(v)}</td><td class="n ${d?'neg':''}">${d?fmt(d):'—'}</td><td>${esc(v.note||'')}</td></tr>`}).join('')}</tbody></table></div><p style="margin:10px 0 0">الرصيد المستحق على الموظف في كل الفترات: <b class="neg">${fmt(owed)}</b> ر.س</p>`:'<p class="muted">لا توجد حركات مسجلة لهذا الموظف.</p>'}`,`<button class="btn primary" data-close>إغلاق</button>`,true);
 }
 function addToList(key,val){val=(val||'').trim();if(val&&!S()[key].includes(val))S()[key].push(val)}
 function editEmployee(e){
@@ -742,11 +746,11 @@ function exportEmployeesXL(){
 const CD={
  name:['الموظف','t'],nid:['رقم الهوية','t'],nat:['الجنسية','t'],total:['الراتب','m'],basic:['الأساسي','m'],housing:['السكن','m'],allow:['بدلات أخرى','m'],ins:['التأمينات','m'],
  absent:['أيام الغياب','d'],annual:['إجازة سنوية','d'],sick:['إجازة مرضية','d'],unpaid:['بدون راتب','d'],
- absVal:['قيمة الغياب','m'],deficit:['العجز','m'],owed:['إجمالي المستحق عليه','m'],dedSal:['إجمالي الخصم','m'],net:['صافي الراتب','m'],
- note:['ملاحظات','t'],summary:['ملخص الحركات','t'],date:['التاريخ','t'],typeL:['النوع','t'],qty:['المقدار','t'],ded:['قيمة الخصم','m']
+ absVal:['قيمة الغياب','m'],deficit:['العجز','m'],repay:['سداد من المديونية','m'],owed:['إجمالي المستحق عليه','m'],dedSal:['إجمالي الخصم','m'],net:['صافي الراتب','m'],
+ note:['ملاحظات','t'],summary:['ملخص الحركات','t'],date:['التاريخ','t'],typeL:['النوع','t'],qty:['المقدار','t'],ded:['الأثر المالي','m']
 };
 const REPORTS={
- dues:{title:'تقرير الغياب والعجز والمستحقات',cols:['name','total','absent','annual','sick','unpaid','absVal','deficit','owed','summary'],idle:['absent','annual','sick','unpaid','deficit']},
+ dues:{title:'تقرير الغياب والعجز والمستحقات',cols:['name','total','absent','annual','sick','unpaid','absVal','deficit','repay','owed','summary'],idle:['absent','annual','sick','unpaid','deficit','repay']},
  payroll:{title:'كشف صافي الرواتب',cols:['name','nid','nat','total','basic','housing','allow','ins','dedSal','net','summary']},
  leaves:{title:'تقرير الإجازات والغياب',cols:['name','absent','annual','sick','unpaid','summary','note'],idle:['absent','annual','sick','unpaid']},
  log:{title:'سجل الحركات التفصيلي بالتواريخ',cols:['name','date','typeL','qty','ded','note'],log:true}
@@ -865,7 +869,7 @@ function exportReportXL(){
   const ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=[{wch:5},{wch:28},...cols.slice(1).map(()=>({wch:14}))];
   ws['!merges']=[0,1,2].map(r=>({s:{r,c:0},e:{r,c:cols.length}}));
   const wb=XLSX.utils.book_new();wb.Workbook={Views:[{RTL:true}]};XLSX.utils.book_append_sheet(wb,ws,'التقرير');
-  const d=[['التاريخ','اليوم','الفرع','الموظف','رقم الهوية','الجنسية','الراتب الإجمالي','النوع','عدد الأيام','المبلغ','قيمة الخصم','ملاحظة']];
+  const d=[['التاريخ','اليوم','الفرع','الموظف','رقم الهوية','الجنسية','الراتب الإجمالي','النوع','عدد الأيام','المبلغ','الأثر المالي (+ عليه / − سداد)','ملاحظة']];
   DB.events.filter(v=>v.date>=m.R.from&&v.date<=m.R.to).sort((a,b)=>a.date.localeCompare(b.date)).forEach(v=>{
     const e=emp(v.eid);if(!e||!inBranch(e,m.R))return;const t=TYPES[v.type];
     d.push([fd(v.date),dayName(v.date),e.branch,e.name,e.nid,e.nat,num(e.total),t.l,t.days?num(v.qty):'',t.days?'':num(v.qty),evDed(e,v),v.note||'']);
